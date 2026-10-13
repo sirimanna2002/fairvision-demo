@@ -1,10 +1,16 @@
 import streamlit as st
 import torch
 import numpy as np
-import cv2
 from torchvision import transforms
 from PIL import Image
 from model import AgeCNN
+
+# OpenCV load wenne nathnam app eka crash wenna denne na
+try:
+    import cv2
+    HAS_CV2 = hasattr(cv2, "CascadeClassifier")
+except Exception:
+    HAS_CV2 = False
 
 AGE_LABELS = ["0-2", "3-9", "10-19", "20-29", "30-39",
               "40-49", "50-59", "60-69", "70+"]
@@ -20,8 +26,14 @@ def load_model():
 
 @st.cache_resource
 def load_face_detector():
-    path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    return cv2.CascadeClassifier(path)
+    if not HAS_CV2:
+        return None
+    try:
+        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        det = cv2.CascadeClassifier(path)
+        return None if det.empty() else det
+    except Exception:
+        return None
 
 model = load_model()
 detector = load_face_detector()
@@ -33,7 +45,9 @@ transform = transforms.Compose([
 ])
 
 def crop_face(pil_image, margin=0.25):
-    """Find the largest face and crop it with a margin (like FairFace 0.25)."""
+    """Find the largest face and crop it with a margin. Returns None if not possible."""
+    if detector is None:
+        return None
     img = np.array(pil_image)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
@@ -51,7 +65,7 @@ st.write(
     "to predict the age group of a face image. The model was trained with "
     "race-by-age balanced oversampling to reduce demographic bias."
 )
-st.info("Tip: use a clear, front-facing photo of one person. The app will automatically crop the face.")
+st.info("Tip: use a clear, front-facing photo of one person, with the face filling most of the image.")
 
 uploaded = st.file_uploader("Upload a face image", type=["jpg", "jpeg", "png"])
 
@@ -61,8 +75,8 @@ if uploaded is not None:
 
     face = crop_face(image)
     if face is None:
-        st.warning("No face detected, so the whole image is used. Results may be unreliable. "
-                   "Try a closer, front-facing photo.")
+        st.warning("Automatic face cropping was not possible, so the whole image is used. "
+                   "Results may be unreliable. Try a closely cropped, front-facing photo.")
         face = image
     else:
         st.image(face, caption="Detected face (used for prediction)", width=200)
