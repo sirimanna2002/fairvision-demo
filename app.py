@@ -15,6 +15,8 @@ except Exception:
 AGE_LABELS = ["0-2", "3-9", "10-19", "20-29", "30-39",
               "40-49", "50-59", "60-69", "70+"]
 
+CONFIDENCE_THRESHOLD = 0.40
+
 st.set_page_config(page_title="FairVision", page_icon="🧑")
 
 @st.cache_resource
@@ -59,6 +61,15 @@ def crop_face(pil_image, margin=0.25):
     x2, y2 = min(x + w + pad_w, img.shape[1]), min(y + h + pad_h, img.shape[0])
     return Image.fromarray(img[y1:y2, x1:x2])
 
+def predict_with_flip(face):
+    """Average the predictions of the original and the mirrored image."""
+    x = transform(face).unsqueeze(0)
+    x_flip = torch.flip(x, dims=[3])
+    with torch.no_grad():
+        p1 = torch.softmax(model(x), dim=1)[0]
+        p2 = torch.softmax(model(x_flip), dim=1)[0]
+    return (p1 + p2) / 2
+
 st.title("FairVision: Age Group Classifier")
 st.write(
     "This demo uses a CNN trained from scratch in PyTorch on the FairFace dataset "
@@ -81,16 +92,20 @@ if uploaded is not None:
     else:
         st.image(face, caption="Detected face (used for prediction)", width=200)
 
-    x = transform(face).unsqueeze(0)
-    with torch.no_grad():
-        probs = torch.softmax(model(x), dim=1)[0]
-
+    probs = predict_with_flip(face)
     top_probs, top_idx = torch.topk(probs, 3)
 
     st.subheader("Top 3 predictions")
+    st.caption("Prediction is averaged over the original and the mirrored image.")
     for p, i in zip(top_probs, top_idx):
         st.write(f"**{AGE_LABELS[i]}**: {p.item() * 100:.1f}%")
         st.progress(float(p))
+
+    if top_probs[0].item() < CONFIDENCE_THRESHOLD:
+        st.warning(
+            f"The model is not confident about this photo (top confidence is below "
+            f"{int(CONFIDENCE_THRESHOLD * 100)}%). Please treat this result as a rough guess only."
+        )
 
 st.markdown("---")
 st.subheader("Limitations and responsible use")
